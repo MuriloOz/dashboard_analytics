@@ -4,7 +4,6 @@ import { authMiddleware } from '../middleware/auth';
 
 const router = Router();
 
-// Todas as rotas de métricas requerem autenticação
 router.use(authMiddleware);
 
 router.get('/dashboard', getDashboardMetrics);

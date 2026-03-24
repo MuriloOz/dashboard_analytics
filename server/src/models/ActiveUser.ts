@@ -6,8 +6,8 @@ interface ActiveUserAttributes {
   sessionId: string;
   userAgent: string;
   ipAddress: string;
-  createdAt: Date;  // ← ADICIONADO
-  updatedAt: Date;  // ← ADICIONADO
+  createdAt: Date;  
+  updatedAt: Date;
 }
 
 interface ActiveUserCreationAttributes extends Optional<ActiveUserAttributes, 'id' | 'createdAt' | 'updatedAt'> {}

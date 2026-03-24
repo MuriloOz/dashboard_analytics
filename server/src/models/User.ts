@@ -6,8 +6,8 @@ interface UserAttributes {
   email: string;
   password: string;
   name: string;
-  createdAt: Date;  // ← ADICIONADO
-  updatedAt: Date;  // ← ADICIONADO
+  createdAt: Date; 
+  updatedAt: Date; 
 }
 
 interface UserCreationAttributes extends Optional<UserAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
