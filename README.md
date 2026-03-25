@@ -149,7 +149,6 @@ dashboard-analytics/
 ├── client/                    # Frontend React
 │   ├── public/
 │   ├── src/
-│   │   ├── components/       # Componentes reutilizáveis
 │   │   ├── contexts/         # Context API (Auth)
 │   │   ├── pages/            # Páginas (Login, Dashboard)
 │   │   ├── services/         # Comunicação com API
@@ -166,12 +165,10 @@ dashboard-analytics/
 │   │   ├── middleware/       # Middlewares (auth)
 │   │   ├── models/           # Models Sequelize
 │   │   ├── routes/           # Rotas da API
-│   │   ├── sockets/          # WebSocket handlers
 │   │   ├── utils/            # Utilitários
 │   │   └── server.ts
 │   ├── .env
 │   ├── package.json
-│   └── tsconfig.json
 │
 └── README.md
 ```
