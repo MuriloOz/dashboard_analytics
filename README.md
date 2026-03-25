@@ -146,30 +146,39 @@ npm start
 ## 📊 Estrutura do Projeto
 ```
 dashboard-analytics/
-├── client/                    # Frontend React
+├── client/                      # Frontend React
 │   ├── public/
 │   ├── src/
-│   │   ├── contexts/         # Context API (Auth)
-│   │   ├── pages/            # Páginas (Login, Dashboard)
-│   │   ├── services/         # Comunicação com API
-│   │   ├── types/            # Tipos TypeScript
+│   │   ├── contexts/            # Context API (Auth, etc)
+│   │   ├── pages/               # Páginas (Login, Dashboard)
+│   │   ├── services/            # Comunicação com API
+│   │   ├── types/               # Tipos TypeScript
+│   │   ├── App.css
 │   │   ├── App.tsx
-│   │   └── index.tsx
+│   │   ├── index.css
+│   │   ├── index.tsx
+│   │   ├── react-app-env.d.ts
+│   │   └── reportWebVitals.ts
+│   ├── package-lock.json
 │   ├── package.json
 │   └── tsconfig.json
-│
-├── server/                    # Backend Node.js
+
+├── server/                      # Backend Node.js
 │   ├── src/
-│   │   ├── config/           # Configuração do banco
-│   │   ├── controllers/      # Lógica de negócio
-│   │   ├── middleware/       # Middlewares (auth)
-│   │   ├── models/           # Models Sequelize
-│   │   ├── routes/           # Rotas da API
-│   │   ├── utils/            # Utilitários
+│   │   ├── config/              # Configuração do banco
+│   │   ├── controllers/         # Lógica de negócio
+│   │   ├── middleware/          # Middlewares
+│   │   ├── models/              # Models
+│   │   ├── routes/              # Rotas da API
+│   │   ├── utils/               # Utilitários
 │   │   └── server.ts
-│   ├── .env
-│   ├── package.json
-│
+│   ├── package-lock.json
+│   └── package.json
+
+├── .gitignore
+├── image-1.png
+├── image.png
+├── LICENSE
 └── README.md
 ```
 
