@@ -1,3 +1,5 @@
+import { Op } from 'sequelize';
+import { randomUUID } from 'crypto';
 import { Sale, ActiveUser } from '../models';
 import { io } from '../server';
 
@@ -19,7 +21,7 @@ const randomInt = (min: number, max: number): number => {
 };
 
 const randomFloat = (min: number, max: number): number => {
-  return Math.random() * (max - min) + min;
+  return parseFloat((Math.random() * (max - min) + min).toFixed(2));
 };
 
 export const generateSale = async (): Promise<void> => {
@@ -27,7 +29,7 @@ export const generateSale = async (): Promise<void> => {
     const product = products[randomInt(0, products.length - 1)];
     const amount = randomInt(1, 5);
     const price = randomFloat(product.minPrice, product.maxPrice);
-    const totalValue = price * amount;
+    const totalValue = parseFloat((price * amount).toFixed(2));
 
     const sale = await Sale.create({
       productName: product.name,
@@ -39,7 +41,6 @@ export const generateSale = async (): Promise<void> => {
 
     console.log(`💰 Nova venda: ${product.name} - R$ ${totalValue.toFixed(2)}`);
 
-    // Emitir evento WebSocket
     io.emit('new-sale', {
       id: sale.id,
       productName: sale.productName,
@@ -56,12 +57,15 @@ export const generateSale = async (): Promise<void> => {
 
 export const generateActiveUser = async (): Promise<void> => {
   try {
-    const sessionId = `session_${Date.now()}_${randomInt(1000, 9999)}`;
+    // FIX: randomUUID() no lugar de Date.now() + número aleatório (evita colisões)
+    const sessionId = `session_${randomUUID()}`;
+
     const userAgents = [
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0',
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/17.2',
       'Mozilla/5.0 (X11; Linux x86_64) Firefox/121.0',
     ];
+
     const ips = [
       '192.168.1.100',
       '192.168.1.101',
@@ -78,7 +82,6 @@ export const generateActiveUser = async (): Promise<void> => {
 
     console.log(`👤 Novo usuário ativo: ${sessionId}`);
 
-    // Emitir evento WebSocket
     io.emit('user-activity', {
       action: 'joined',
       sessionId,
@@ -88,31 +91,52 @@ export const generateActiveUser = async (): Promise<void> => {
   }
 };
 
-export const startDataGeneration = (): void => {
-  console.log('🎲 Iniciando geração de dados simulados...');
-
-  // Gerar uma venda a cada 5-15 segundos
-  setInterval(() => {
-    generateSale();
+// FIX: setTimeout recursivo para variar o intervalo a cada execução
+const scheduleNextSale = (): void => {
+  setTimeout(() => {
+    generateSale().catch((err) =>
+      console.error('Falha na geração de venda:', err)
+    );
+    scheduleNextSale();
   }, randomInt(5000, 15000));
+};
 
-  // Gerar um usuário ativo a cada 10-30 segundos
-  setInterval(() => {
-    generateActiveUser();
+// FIX: setTimeout recursivo para variar o intervalo a cada execução
+const scheduleNextUser = (): void => {
+  setTimeout(() => {
+    generateActiveUser().catch((err) =>
+      console.error('Falha na geração de usuário ativo:', err)
+    );
+    scheduleNextUser();
   }, randomInt(10000, 30000));
+};
 
-  // Limpar usuários inativos a cada 5 minutos
+const startCleanup = (): void => {
   setInterval(async () => {
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-    const deleted = await ActiveUser.destroy({
-      where: {
-        updatedAt: {
-          $lt: fiveMinutesAgo,
-        } as any,
-      },
-    });
-    if (deleted > 0) {
-      console.log(`🧹 Removidos ${deleted} usuários inativos`);
+    try {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+
+      // FIX: Op.lt do Sequelize no lugar de $lt (operador do MongoDB)
+      const deleted = await ActiveUser.destroy({
+        where: {
+          updatedAt: {
+            [Op.lt]: fiveMinutesAgo,
+          },
+        },
+      });
+
+      if (deleted > 0) {
+        console.log(`🧹 Removidos ${deleted} usuários inativos`);
+      }
+    } catch (error) {
+      console.error('Erro ao limpar usuários inativos:', error);
     }
   }, 5 * 60 * 1000);
+};
+
+export const startDataGeneration = (): void => {
+  console.log('🎲 Iniciando geração de dados simulados...');
+  scheduleNextSale();
+  scheduleNextUser();
+  startCleanup();
 };
