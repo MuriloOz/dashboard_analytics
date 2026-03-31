@@ -3,7 +3,17 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { metricsService } from '../services/api';
 import { DashboardMetrics, RecentSale } from '../types';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts';
 import io from 'socket.io-client';
 
 const socket = io('http://localhost:5000');
@@ -14,6 +24,25 @@ const formatCurrency = (value: number): string => {
     maximumFractionDigits: 2,
   });
 };
+
+const timeAgo = (date: string): string => {
+  const diff = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+  if (diff < 60) return 'agora';
+  if (diff < 3600) return `há ${Math.floor(diff / 60)} min`;
+  return new Date(date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+};
+
+const CATEGORY_COLORS: Record<string, { pill: string; text: string }> = {
+  'Eletrônicos':   { pill: 'rgba(96,165,250,0.15)',  text: '#93c5fd' },
+  'Periféricos':   { pill: 'rgba(167,139,250,0.15)', text: '#c4b5fd' },
+  'Hardware':      { pill: 'rgba(45,212,191,0.15)',  text: '#5eead4' },
+  'Áudio':         { pill: 'rgba(251,191,36,0.15)',  text: '#fcd34d' },
+  'Armazenamento': { pill: 'rgba(248,113,113,0.15)', text: '#fca5a5' },
+  'Móveis':        { pill: 'rgba(74,222,128,0.15)',  text: '#86efac' },
+};
+
+const getCategoryStyle = (cat: string) =>
+  CATEGORY_COLORS[cat] || { pill: 'rgba(255,255,255,0.1)', text: 'rgba(255,255,255,0.6)' };
 
 const Dashboard: React.FC = () => {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
@@ -31,10 +60,8 @@ const Dashboard: React.FC = () => {
       setLoading(true);
       const data = await metricsService.getDashboard();
       setMetrics(data);
-
       const salesData = await metricsService.getRecentSales(10);
       setRecentSales(salesData.sales || []);
-
       setError('');
     } catch (err: any) {
       setError('Erro ao carregar métricas');
@@ -47,65 +74,35 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     fetchMetrics();
 
-    socket.on('connect', () => {
-      console.log('🔌 Conectado ao WebSocket');
-    });
+    socket.on('connect', () => console.log('🔌 Conectado ao WebSocket'));
 
     socket.on('new-sale', (sale: RecentSale) => {
-      console.log('💰 Nova venda recebida:', sale);
-
       setIsUpdating(true);
-      setTimeout(() => setIsUpdating(false), 1000);
-
+      setTimeout(() => setIsUpdating(false), 1500);
       setRecentSales((prev) => [sale, ...prev].slice(0, 10));
-
-      setMetrics((prevMetrics) => {
-        if (!prevMetrics) return prevMetrics;
-
-        const newTotalSales = parseFloat(prevMetrics.today.totalSales) + sale.totalValue;
-        const newTotalOrders = prevMetrics.today.totalOrders + 1;
-        const newAverageTicket = (newTotalSales / newTotalOrders).toFixed(2);
-
+      setMetrics((prev) => {
+        if (!prev) return prev;
+        const newTotalSales = parseFloat(prev.today.totalSales) + sale.totalValue;
+        const newTotalOrders = prev.today.totalOrders + 1;
         return {
-          ...prevMetrics,
+          ...prev,
           today: {
             totalSales: newTotalSales.toFixed(2),
             totalOrders: newTotalOrders,
-            averageTicket: newAverageTicket,
+            averageTicket: (newTotalSales / newTotalOrders).toFixed(2),
           },
-          salesLast7Days: [
-            ...prevMetrics.salesLast7Days,
-            {
-              date: sale.createdAt,
-              value: sale.totalValue,
-              product: sale.productName,
-              category: sale.category,
-            },
-          ],
-          salesLast30Days: [
-            ...prevMetrics.salesLast30Days,
-            {
-              date: sale.createdAt,
-              value: sale.totalValue,
-              product: sale.productName,
-              category: sale.category,
-            },
-          ],
+          salesLast7Days: [...prev.salesLast7Days, { date: sale.createdAt, value: sale.totalValue, product: sale.productName, category: sale.category }],
+          salesLast30Days: [...prev.salesLast30Days, { date: sale.createdAt, value: sale.totalValue, product: sale.productName, category: sale.category }],
         };
       });
     });
 
-    // FIX: recebe o data com action ao invés de chamar fetchMetrics()
-    // Isso evitava que o estado fosse sobrescrito pelo servidor toda vez
-    // que um usuário entrava/saía, apagando as vendas acumuladas em tempo real
+    // FIX: atualiza só o contador, sem sobrescrever o estado inteiro
     socket.on('user-activity', (data: { action: string; sessionId: string }) => {
       setMetrics((prev) => {
         if (!prev) return prev;
         const delta = data.action === 'joined' ? 1 : -1;
-        return {
-          ...prev,
-          activeUsers: Math.max(0, prev.activeUsers + delta),
-        };
+        return { ...prev, activeUsers: Math.max(0, prev.activeUsers + delta) };
       });
     });
 
@@ -118,57 +115,25 @@ const Dashboard: React.FC = () => {
 
   const filteredSalesChartData = React.useMemo(() => {
     if (!metrics) return [];
-
-    const now = new Date();
-    let startDate: Date;
-
-    switch (timeFilter) {
-      case '1h':
-        startDate = new Date(now.getTime() - 60 * 60 * 1000);
-        break;
-      case '24h':
-        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        break;
-      case '7d':
-        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        break;
-      case '30d':
-        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        break;
-      default:
-        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    }
-
+    const offsets: Record<string, number> = {
+      '1h': 60 * 60 * 1000,
+      '24h': 24 * 60 * 60 * 1000,
+      '7d': 7 * 24 * 60 * 60 * 1000,
+      '30d': 30 * 24 * 60 * 60 * 1000,
+    };
+    const startDate = new Date(Date.now() - offsets[timeFilter]);
     const salesData = timeFilter === '30d' ? metrics.salesLast30Days : metrics.salesLast7Days;
-    const filteredSales = salesData.filter((sale) => new Date(sale.date) >= startDate);
-
-    if (filteredSales.length === 0) return [];
-
-    const groupedByDate = filteredSales.reduce((acc: any, sale) => {
-      let dateKey: string;
-
-      if (timeFilter === '1h' || timeFilter === '24h') {
-        dateKey = new Date(sale.date).toLocaleTimeString('pt-BR', {
-          hour: '2-digit',
-          minute: '2-digit',
-        });
-      } else {
-        dateKey = new Date(sale.date).toLocaleDateString('pt-BR', {
-          day: '2-digit',
-          month: '2-digit',
-        });
-      }
-
-      if (acc[dateKey]) {
-        acc[dateKey] += sale.value;
-      } else {
-        acc[dateKey] = sale.value;
-      }
-
+    const filtered = salesData.filter((s) => new Date(s.date) >= startDate);
+    if (filtered.length === 0) return [];
+    const grouped = filtered.reduce((acc: any, sale) => {
+      const key =
+        timeFilter === '1h' || timeFilter === '24h'
+          ? new Date(sale.date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+          : new Date(sale.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+      acc[key] = (acc[key] || 0) + sale.value;
       return acc;
     }, {});
-
-    return Object.entries(groupedByDate).map(([date, valor]) => ({
+    return Object.entries(grouped).map(([date, valor]) => ({
       date,
       valor: parseFloat(Number(valor).toFixed(2)),
     }));
@@ -176,345 +141,416 @@ const Dashboard: React.FC = () => {
 
   const categoryData = React.useMemo(() => {
     return (
-      metrics?.topProducts.reduce((acc: any[], product) => {
-        const existing = acc.find((item) => item.category === product.category);
-        if (existing) {
-          existing.quantidade += 1;
-        } else {
-          acc.push({ category: product.category, quantidade: 1 });
-        }
+      metrics?.topProducts.reduce((acc: any[], p) => {
+        const ex = acc.find((i) => i.category === p.category);
+        if (ex) ex.quantidade += 1;
+        else acc.push({ category: p.category, quantidade: 1 });
         return acc;
       }, []) || []
     );
   }, [metrics?.topProducts]);
 
-  const handleLogout = () => {
-    logout();
-    navigate('/');
+  const handleLogout = () => { logout(); navigate('/'); };
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div style={s.tooltip}>
+        <p style={s.tooltipLabel}>{label}</p>
+        <p style={s.tooltipVal}>R$ {formatCurrency(payload[0].value)}</p>
+      </div>
+    );
   };
 
   if (loading && !metrics) {
     return (
-      <div className="d-flex justify-content-center align-items-center min-vh-100">
-        <div className="spinner-border text-primary" role="status" style={{ width: '3rem', height: '3rem' }}>
-          <span className="visually-hidden">Carregando...</span>
-        </div>
+      <div style={s.loadingWrap}>
+        <div style={s.spinner} />
+        <p style={s.loadingText}>Carregando dashboard...</p>
       </div>
     );
   }
 
   if (error && !metrics) {
     return (
-      <div className="container mt-5">
-        <div className="alert alert-danger" role="alert">
-          {error}
-        </div>
+      <div style={s.loadingWrap}>
+        <div style={s.errorBox}>{error}</div>
       </div>
     );
   }
 
+  const metricCards = [
+    {
+      label: 'Vendas hoje',
+      value: `R$ ${formatCurrency(parseFloat(metrics?.today.totalSales || '0'))}`,
+      sub: `${metrics?.today.totalOrders} pedidos`,
+      color: '#4ade80',
+      glow: 'rgba(74,222,128,0.08)',
+      icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
+    },
+    {
+      label: 'Ticket médio',
+      value: `R$ ${formatCurrency(parseFloat(metrics?.today.averageTicket || '0'))}`,
+      sub: 'por pedido',
+      color: '#a78bfa',
+      glow: 'rgba(167,139,250,0.08)',
+      icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
+    },
+    {
+      label: 'Usuários ativos',
+      value: String(metrics?.activeUsers ?? 0),
+      sub: 'online agora',
+      color: '#60a5fa',
+      glow: 'rgba(96,165,250,0.08)',
+      icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+    },
+    {
+      label: 'Conversão',
+      value: String(metrics?.conversionRate ?? '—'),
+      sub: 'taxa de conversão',
+      color: '#fbbf24',
+      glow: 'rgba(251,191,36,0.08)',
+      icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
+    },
+  ];
+
+  const filters: Array<'1h' | '24h' | '7d' | '30d'> = ['1h', '24h', '7d', '30d'];
+
   return (
-    <div className="min-vh-100" style={{ backgroundColor: '#f0f2f5' }}>
-      {/* Navbar */}
-      <nav className="navbar navbar-dark shadow-sm" style={{ backgroundColor: '#1a73e8' }}>
-        <div className="container-fluid">
-          <span className="navbar-brand mb-0 h1">
-            📊 Dashboard Analytics
+    <div style={s.root}>
+      <div style={s.orb1} />
+      <div style={s.orb2} />
+      <div style={s.orb3} />
+
+      <div style={s.inner}>
+        {/* Navbar */}
+        <nav style={s.nav}>
+          <div style={s.navLeft}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="3" width="8" height="8" rx="2" fill="#a78bfa"/>
+              <rect x="13" y="3" width="8" height="8" rx="2" fill="#60a5fa"/>
+              <rect x="3" y="13" width="8" height="8" rx="2" fill="#34d399"/>
+              <rect x="13" y="13" width="8" height="8" rx="2" fill="#f472b6"/>
+            </svg>
+            <span style={s.navTitle}>Analytics</span>
             {isUpdating && (
-              <span className="badge bg-success ms-2 animate-pulse">
-                🔴 AO VIVO
-              </span>
+              <div style={s.liveChip}>
+                <span style={s.liveDot} />
+                ao vivo
+              </div>
             )}
-          </span>
-          <div className="d-flex align-items-center">
-            <span className="text-white me-3">👋 Olá, {user?.name}!</span>
-            <button className="btn btn-outline-light btn-sm" onClick={handleLogout}>
-              Sair
-            </button>
           </div>
-        </div>
-      </nav>
+          <div style={s.navRight}>
+            <span style={s.navUser}>Olá, {user?.name}</span>
+            <button style={s.logoutBtn} onClick={handleLogout}>Sair</button>
+          </div>
+        </nav>
 
-      <div className="container-fluid p-4">
-        {/* Cards de Métricas */}
-        <div className="row g-4 mb-4">
-          <div className="col-lg-3 col-md-6">
-            <div className="card shadow-sm border-0 h-100 hover-card">
-              <div className="card-body">
-                <div className="d-flex justify-content-between align-items-center mb-2">
-                  <h6 className="text-muted mb-0">💰 Vendas Hoje</h6>
-                  <div className="bg-success bg-opacity-10 rounded-circle p-2">
-                    <span className="text-success">📈</span>
-                  </div>
-                </div>
-                <h2 className="text-success fw-bold mb-1">
-                  R$ {formatCurrency(parseFloat(metrics?.today.totalSales || '0'))}
-                </h2>
-                <p className="text-muted mb-0 small">
-                  <strong>{metrics?.today.totalOrders}</strong> pedidos realizados
-                </p>
+        {/* Metric cards */}
+        <div style={s.cardGrid}>
+          {metricCards.map((card, i) => (
+            <div key={i} style={{ ...s.metricCard, background: `linear-gradient(135deg, rgba(255,255,255,0.05), ${card.glow})` }}>
+              <div style={s.metricTop}>
+                <span style={s.metricLabel}>{card.label}</span>
+                <div style={{ ...s.metricIcon, background: card.glow }}>{card.icon}</div>
               </div>
+              <div style={{ ...s.metricValue, color: card.color }}>{card.value}</div>
+              <div style={s.metricSub}>{card.sub}</div>
             </div>
-          </div>
-
-          <div className="col-lg-3 col-md-6">
-            <div className="card shadow-sm border-0 h-100 hover-card">
-              <div className="card-body">
-                <div className="d-flex justify-content-between align-items-center mb-2">
-                  <h6 className="text-muted mb-0">🎯 Ticket Médio</h6>
-                  <div className="bg-primary bg-opacity-10 rounded-circle p-2">
-                    <span className="text-primary">💵</span>
-                  </div>
-                </div>
-                <h2 className="text-primary fw-bold mb-1">
-                  R$ {formatCurrency(parseFloat(metrics?.today.averageTicket || '0'))}
-                </h2>
-                <p className="text-muted mb-0 small">por pedido</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="col-lg-3 col-md-6">
-            <div className="card shadow-sm border-0 h-100 hover-card">
-              <div className="card-body">
-                <div className="d-flex justify-content-between align-items-center mb-2">
-                  <h6 className="text-muted mb-0">👥 Usuários Ativos</h6>
-                  <div className="bg-info bg-opacity-10 rounded-circle p-2">
-                    <span className="text-info">🌐</span>
-                  </div>
-                </div>
-                <h2 className="text-info fw-bold mb-1">{metrics?.activeUsers}</h2>
-                <p className="text-muted mb-0 small">
-                  <span className="text-success">● </span>online agora
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="col-lg-3 col-md-6">
-            <div className="card shadow-sm border-0 h-100 hover-card">
-              <div className="card-body">
-                <div className="d-flex justify-content-between align-items-center mb-2">
-                  <h6 className="text-muted mb-0">📈 Conversão</h6>
-                  <div className="bg-warning bg-opacity-10 rounded-circle p-2">
-                    <span className="text-warning">⚡</span>
-                  </div>
-                </div>
-                <h2 className="text-warning fw-bold mb-1">{metrics?.conversionRate}</h2>
-                <p className="text-muted mb-0 small">taxa de conversão</p>
-              </div>
-            </div>
-          </div>
+          ))}
         </div>
 
-        {/* Gráficos e Feed */}
-        <div className="row g-4">
-          {/* Gráfico de Vendas com Filtros */}
-          <div className="col-lg-8">
-            <div className="card shadow-sm border-0 h-100">
-              <div className="card-body">
-                <div className="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
-                  <h5 className="card-title fw-bold mb-0">📊 Vendas por Período</h5>
-                  <div className="btn-group btn-group-sm" role="group">
-                    <button
-                      type="button"
-                      className={`btn ${timeFilter === '1h' ? 'btn-primary' : 'btn-outline-primary'}`}
-                      onClick={() => setTimeFilter('1h')}
-                    >
-                      1 Hora
-                    </button>
-                    <button
-                      type="button"
-                      className={`btn ${timeFilter === '24h' ? 'btn-primary' : 'btn-outline-primary'}`}
-                      onClick={() => setTimeFilter('24h')}
-                    >
-                      24 Horas
-                    </button>
-                    <button
-                      type="button"
-                      className={`btn ${timeFilter === '7d' ? 'btn-primary' : 'btn-outline-primary'}`}
-                      onClick={() => setTimeFilter('7d')}
-                    >
-                      7 Dias
-                    </button>
-                    <button
-                      type="button"
-                      className={`btn ${timeFilter === '30d' ? 'btn-primary' : 'btn-outline-primary'}`}
-                      onClick={() => setTimeFilter('30d')}
-                    >
-                      30 Dias
-                    </button>
-                  </div>
-                </div>
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={filteredSalesChartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-                    <XAxis dataKey="date" stroke="#666" />
-                    <YAxis stroke="#666" />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: '#fff',
-                        border: '1px solid #ddd',
-                        borderRadius: '8px',
-                      }}
-                      formatter={(value: any) => `R$ ${formatCurrency(Number(value))}`}
-                    />
-                    <Legend />
-                    <Line
-                      type="monotone"
-                      dataKey="valor"
-                      stroke="#1a73e8"
-                      strokeWidth={3}
-                      name="Valor (R$)"
-                      dot={{ fill: '#1a73e8', r: 4 }}
-                      activeDot={{ r: 6 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
+        {/* Charts row */}
+        <div style={s.chartsRow}>
+          <div style={s.glassPanel}>
+            <div style={s.panelHeader}>
+              <span style={s.panelTitle}>Vendas por período</span>
+              <div style={s.filterGroup}>
+                {filters.map((f) => (
+                  <button
+                    key={f}
+                    style={{ ...s.filterBtn, ...(timeFilter === f ? s.filterBtnActive : {}) }}
+                    onClick={() => setTimeFilter(f)}
+                  >
+                    {f}
+                  </button>
+                ))}
               </div>
             </div>
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={filteredSalesChartData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="lineGradFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#a78bfa" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="#a78bfa" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis dataKey="date" stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 11 }} />
+                <YAxis stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 11 }} />
+                <Tooltip content={<CustomTooltip />} />
+                <Line type="monotone" dataKey="valor" stroke="#a78bfa" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#a78bfa', strokeWidth: 0 }} />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
 
-          {/* Feed de Vendas em Tempo Real */}
-          <div className="col-lg-4">
-            <div className="card shadow-sm border-0 h-100">
-              <div className="card-body">
-                <h5 className="card-title fw-bold mb-4">
-                  🔴 Vendas em Tempo Real
-                </h5>
-                <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                  {recentSales.length === 0 ? (
-                    <p className="text-muted text-center py-4">
-                      Aguardando vendas...
-                    </p>
-                  ) : (
-                    recentSales.map((sale) => (
-                      <div
-                        key={sale.id}
-                        className="alert alert-light border-start border-success border-4 mb-2 fade-in"
-                      >
-                        <div className="d-flex justify-content-between align-items-start">
-                          <div>
-                            <strong className="text-dark">{sale.productName}</strong>
-                            <br />
-                            <small className="text-muted">
-                              {sale.amount}x R$ {formatCurrency(sale.price)}
-                            </small>
-                          </div>
-                          <div className="text-end">
-                            <strong className="text-success">
-                              R$ {formatCurrency(sale.totalValue)}
-                            </strong>
-                            <br />
-                            <small className="text-muted">
-                              {new Date(sale.createdAt).toLocaleTimeString('pt-BR')}
-                            </small>
-                          </div>
-                        </div>
+          {/* Feed */}
+          <div style={s.glassPanel}>
+            <div style={s.panelHeader}>
+              <span style={s.panelTitle}>Tempo real</span>
+              <div style={s.liveChip}><span style={s.liveDot} />ao vivo</div>
+            </div>
+            <div style={s.feedList} className="feed-scroll">
+              {recentSales.length === 0 ? (
+                <p style={s.emptyFeed}>Aguardando vendas...</p>
+              ) : (
+                recentSales.map((sale) => {
+                  const cs = getCategoryStyle(sale.category);
+                  return (
+                    <div key={sale.id} style={s.feedItem}>
+                      <div>
+                        <div style={s.feedName}>{sale.productName}</div>
+                        <span style={{ ...s.pill, background: cs.pill, color: cs.text, marginTop: 4, display: 'inline-block' }}>
+                          {sale.category}
+                        </span>
                       </div>
-                    ))
-                  )}
-                </div>
-              </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={s.feedValue}>R$ {formatCurrency(sale.totalValue)}</div>
+                        <div style={s.feedTime}>{timeAgo(sale.createdAt)}</div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
 
-        {/* Segunda Linha de Gráficos */}
-        <div className="row g-4 mt-2">
-          {/* Gráfico de Categorias */}
-          <div className="col-lg-6">
-            <div className="card shadow-sm border-0">
-              <div className="card-body">
-                <h5 className="card-title fw-bold mb-4">🏷️ Produtos por Categoria</h5>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={categoryData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-                    <XAxis dataKey="category" stroke="#666" />
-                    <YAxis stroke="#666" />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: '#fff',
-                        border: '1px solid #ddd',
-                        borderRadius: '8px',
-                      }}
-                    />
-                    <Bar dataKey="quantidade" fill="#198754" name="Quantidade" radius={[8, 8, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+        {/* Second row */}
+        <div style={s.chartsRow}>
+          <div style={s.glassPanel}>
+            <div style={s.panelHeader}>
+              <span style={s.panelTitle}>Produtos por categoria</span>
             </div>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={categoryData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#60a5fa" stopOpacity={0.9} />
+                    <stop offset="100%" stopColor="#a78bfa" stopOpacity={0.5} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis dataKey="category" stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 11 }} />
+                <YAxis stroke="rgba(255,255,255,0.15)" tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 11 }} />
+                <Tooltip
+                  contentStyle={{ background: 'rgba(10,8,20,0.95)', border: '0.5px solid rgba(255,255,255,0.12)', borderRadius: 10, color: '#fff', fontSize: 12 }}
+                  cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                />
+                <Bar dataKey="quantidade" name="Qtd" radius={[6, 6, 0, 0]} fill="url(#barGrad)" />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
 
-          {/* Top Produtos */}
-          <div className="col-lg-6">
-            <div className="card shadow-sm border-0">
-              <div className="card-body">
-                <h5 className="card-title fw-bold mb-4">🔥 Top Produtos</h5>
-                <div className="table-responsive">
-                  <table className="table table-hover">
-                    <thead>
-                      <tr>
-                        <th className="border-0">Produto</th>
-                        <th className="border-0">Categoria</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {metrics?.topProducts.slice(0, 5).map((product, index) => (
-                        <tr key={index}>
-                          <td>
-                            <span className="fw-semibold">{product.name}</span>
-                          </td>
-                          <td>
-                            <span className="badge bg-secondary">{product.category}</span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+          {/* Top products */}
+          <div style={s.glassPanel}>
+            <div style={s.panelHeader}>
+              <span style={s.panelTitle}>Top produtos</span>
+            </div>
+            <div style={s.feedList} className="feed-scroll">
+              {metrics?.topProducts.slice(0, 6).map((product, i) => {
+                const cs = getCategoryStyle(product.category);
+                return (
+                  <div key={i} style={s.feedItem}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={s.rankNum}>{i + 1}</span>
+                      <div>
+                        <div style={s.feedName}>{product.name}</div>
+                        <span style={{ ...s.pill, background: cs.pill, color: cs.text, marginTop: 4, display: 'inline-block' }}>
+                          {product.category}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
       </div>
 
-      {/* CSS Inline para Animações */}
       <style>{`
-        .hover-card {
-          transition: transform 0.2s, box-shadow 0.2s;
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap');
+        * { box-sizing: border-box; }
+        body { background: #0a0814 !important; margin: 0; }
+        @keyframes pulse-dot {
+          0%,100% { opacity:1; box-shadow:0 0 6px #4ade80; }
+          50% { opacity:0.4; box-shadow:0 0 2px #4ade80; }
         }
-        .hover-card:hover {
-          transform: translateY(-5px);
-          box-shadow: 0 8px 20px rgba(0,0,0,0.12) !important;
+        @keyframes float1 {
+          0%,100% { transform:translate(0,0) scale(1); }
+          50% { transform:translate(30px,-20px) scale(1.05); }
         }
-        .fade-in {
-          animation: fadeIn 0.5s ease-in;
+        @keyframes float2 {
+          0%,100% { transform:translate(0,0) scale(1); }
+          50% { transform:translate(-20px,30px) scale(1.08); }
         }
-        @keyframes fadeIn {
-          from {
-            opacity: 0;
-            transform: translateY(-10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
+        @keyframes float3 {
+          0%,100% { transform:translate(0,0) scale(1); }
+          50% { transform:translate(15px,15px) scale(1.03); }
         }
-        .animate-pulse {
-          animation: pulse 2s infinite;
+        @keyframes fadeSlideIn {
+          from { opacity:0; transform:translateY(8px); }
+          to { opacity:1; transform:translateY(0); }
         }
-        @keyframes pulse {
-          0%, 100% {
-            opacity: 1;
-          }
-          50% {
-            opacity: 0.5;
-          }
+        @keyframes spin {
+          to { transform:rotate(360deg); }
         }
+        .feed-scroll::-webkit-scrollbar { display: none; }
       `}</style>
     </div>
   );
+};
+
+const s: Record<string, React.CSSProperties> = {
+  root: {
+    minHeight: '100vh',
+    background: 'linear-gradient(135deg, #0a0814 0%, #0f0c29 40%, #1a0f2e 100%)',
+    fontFamily: "'DM Sans', sans-serif",
+    position: 'relative',
+    overflowX: 'hidden',
+  },
+  orb1: {
+    position: 'absolute', top: -120, left: -120,
+    width: 500, height: 500, borderRadius: '50%',
+    background: 'radial-gradient(circle, rgba(167,139,250,0.18) 0%, transparent 70%)',
+    animation: 'float1 12s ease-in-out infinite',
+    pointerEvents: 'none',
+  },
+  orb2: {
+    position: 'absolute', top: 200, right: -100,
+    width: 400, height: 400, borderRadius: '50%',
+    background: 'radial-gradient(circle, rgba(96,165,250,0.14) 0%, transparent 70%)',
+    animation: 'float2 15s ease-in-out infinite',
+    pointerEvents: 'none',
+  },
+  orb3: {
+    position: 'absolute', bottom: 100, left: '40%',
+    width: 350, height: 350, borderRadius: '50%',
+    background: 'radial-gradient(circle, rgba(52,211,153,0.1) 0%, transparent 70%)',
+    animation: 'float3 18s ease-in-out infinite',
+    pointerEvents: 'none',
+  },
+  inner: {
+    position: 'relative', zIndex: 1,
+    maxWidth: 1280, margin: '0 auto',
+    padding: '0 24px 48px',
+  },
+  nav: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    padding: '20px 0 28px',
+    borderBottom: '0.5px solid rgba(255,255,255,0.06)',
+    marginBottom: 28,
+  },
+  navLeft: { display: 'flex', alignItems: 'center', gap: 12 },
+  navTitle: { fontSize: 16, fontWeight: 600, color: '#fff', letterSpacing: '-0.01em' },
+  navRight: { display: 'flex', alignItems: 'center', gap: 14 },
+  navUser: { fontSize: 13, color: 'rgba(255,255,255,0.4)' },
+  logoutBtn: {
+    background: 'rgba(255,255,255,0.05)',
+    border: '0.5px solid rgba(255,255,255,0.1)',
+    borderRadius: 8, padding: '6px 14px',
+    color: 'rgba(255,255,255,0.5)', fontSize: 12,
+    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+  },
+  liveChip: {
+    display: 'flex', alignItems: 'center', gap: 6,
+    background: 'rgba(74,222,128,0.08)',
+    border: '0.5px solid rgba(74,222,128,0.2)',
+    borderRadius: 20, padding: '4px 10px',
+    fontSize: 11, color: '#4ade80', fontWeight: 500,
+  },
+  liveDot: {
+    display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
+    background: '#4ade80', animation: 'pulse-dot 2s infinite',
+  },
+  cardGrid: {
+    display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))',
+    gap: 12, marginBottom: 12,
+  },
+  metricCard: {
+    borderRadius: 14, border: '0.5px solid rgba(255,255,255,0.09)',
+    padding: '18px 20px',
+    backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+    animation: 'fadeSlideIn 0.4s ease both',
+  },
+  metricTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
+  metricLabel: { fontSize: 11, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.07em', textTransform: 'uppercase' },
+  metricIcon: { width: 28, height: 28, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  metricValue: { fontSize: 24, fontWeight: 600, lineHeight: 1, marginBottom: 6, letterSpacing: '-0.02em' },
+  metricSub: { fontSize: 12, color: 'rgba(255,255,255,0.25)' },
+  chartsRow: { display: 'grid', gridTemplateColumns: '1fr 340px', gap: 12, marginBottom: 12 },
+  glassPanel: {
+    background: 'rgba(255,255,255,0.03)',
+    border: '0.5px solid rgba(255,255,255,0.08)',
+    borderRadius: 14, padding: '20px 22px',
+    backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+  },
+  panelHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  panelTitle: { fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.07em', textTransform: 'uppercase' },
+  filterGroup: { display: 'flex', gap: 4 },
+  filterBtn: {
+    background: 'transparent', border: '0.5px solid rgba(255,255,255,0.08)',
+    borderRadius: 6, padding: '4px 10px',
+    color: 'rgba(255,255,255,0.3)', fontSize: 11,
+    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+  },
+  filterBtnActive: {
+    background: 'rgba(167,139,250,0.12)',
+    border: '0.5px solid rgba(167,139,250,0.3)',
+    color: '#c4b5fd',
+  },
+  feedList: { display: 'flex', flexDirection: 'column', gap: 0, overflowY: 'auto', maxHeight: 260, scrollbarWidth: 'none', msOverflowStyle: 'none' } as React.CSSProperties,
+  feedItem: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    padding: '10px 0', borderBottom: '0.5px solid rgba(255,255,255,0.05)',
+    animation: 'fadeSlideIn 0.3s ease both',
+  },
+  feedName: { fontSize: 13, color: 'rgba(255,255,255,0.75)', fontWeight: 500 },
+  feedValue: { fontSize: 13, fontWeight: 600, color: '#4ade80' },
+  feedTime: { fontSize: 11, color: 'rgba(255,255,255,0.22)', marginTop: 3 },
+  pill: { fontSize: 10, fontWeight: 500, padding: '3px 8px', borderRadius: 20 },
+  rankNum: {
+    width: 22, height: 22, borderRadius: 6,
+    background: 'rgba(255,255,255,0.05)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: 11, color: 'rgba(255,255,255,0.25)', fontWeight: 600, flexShrink: 0,
+  },
+  emptyFeed: { fontSize: 13, color: 'rgba(255,255,255,0.2)', textAlign: 'center', padding: '32px 0' },
+  tooltip: {
+    background: 'rgba(10,8,20,0.95)',
+    border: '0.5px solid rgba(255,255,255,0.12)',
+    borderRadius: 10, padding: '8px 12px',
+  },
+  tooltipLabel: { fontSize: 11, color: 'rgba(255,255,255,0.35)', marginBottom: 4 },
+  tooltipVal: { fontSize: 14, fontWeight: 600, color: '#a78bfa' },
+  loadingWrap: {
+    minHeight: '100vh',
+    background: 'linear-gradient(135deg, #0a0814 0%, #0f0c29 100%)',
+    display: 'flex', flexDirection: 'column',
+    alignItems: 'center', justifyContent: 'center', gap: 16,
+  },
+  spinner: {
+    width: 36, height: 36, borderRadius: '50%',
+    border: '2px solid rgba(167,139,250,0.15)',
+    borderTopColor: '#a78bfa',
+    animation: 'spin 0.8s linear infinite',
+  },
+  loadingText: { fontSize: 13, color: 'rgba(255,255,255,0.25)' },
+  errorBox: {
+    background: 'rgba(239,68,68,0.08)', border: '0.5px solid rgba(239,68,68,0.25)',
+    borderRadius: 12, padding: '12px 20px', color: '#fca5a5', fontSize: 13,
+  },
 };
 
 export default Dashboard;
