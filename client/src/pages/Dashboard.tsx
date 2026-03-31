@@ -31,11 +31,10 @@ const Dashboard: React.FC = () => {
       setLoading(true);
       const data = await metricsService.getDashboard();
       setMetrics(data);
-      
-      // Buscar vendas recentes também
+
       const salesData = await metricsService.getRecentSales(10);
       setRecentSales(salesData.sales || []);
-      
+
       setError('');
     } catch (err: any) {
       setError('Erro ao carregar métricas');
@@ -48,26 +47,21 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     fetchMetrics();
 
-    // Conectar ao WebSocket
     socket.on('connect', () => {
       console.log('🔌 Conectado ao WebSocket');
     });
 
-    // Receber nova venda em tempo real
     socket.on('new-sale', (sale: RecentSale) => {
       console.log('💰 Nova venda recebida:', sale);
-      
-      // Mostrar indicador de atualização
+
       setIsUpdating(true);
       setTimeout(() => setIsUpdating(false), 1000);
 
-      // Adicionar venda na lista
       setRecentSales((prev) => [sale, ...prev].slice(0, 10));
 
-      // Atualizar métricas localmente (TEMPO REAL)
       setMetrics((prevMetrics) => {
         if (!prevMetrics) return prevMetrics;
-        
+
         const newTotalSales = parseFloat(prevMetrics.today.totalSales) + sale.totalValue;
         const newTotalOrders = prevMetrics.today.totalOrders + 1;
         const newAverageTicket = (newTotalSales / newTotalOrders).toFixed(2);
@@ -79,26 +73,40 @@ const Dashboard: React.FC = () => {
             totalOrders: newTotalOrders,
             averageTicket: newAverageTicket,
           },
-          // Adicionar venda aos gráficos também
-          salesLast7Days: [...prevMetrics.salesLast7Days, {
-            date: sale.createdAt,
-            value: sale.totalValue,
-            product: sale.productName,
-            category: sale.category,
-          }],
-          salesLast30Days: [...prevMetrics.salesLast30Days, {
-            date: sale.createdAt,
-            value: sale.totalValue,
-            product: sale.productName,
-            category: sale.category,
-          }],
+          salesLast7Days: [
+            ...prevMetrics.salesLast7Days,
+            {
+              date: sale.createdAt,
+              value: sale.totalValue,
+              product: sale.productName,
+              category: sale.category,
+            },
+          ],
+          salesLast30Days: [
+            ...prevMetrics.salesLast30Days,
+            {
+              date: sale.createdAt,
+              value: sale.totalValue,
+              product: sale.productName,
+              category: sale.category,
+            },
+          ],
         };
       });
     });
 
-    socket.on('user-activity', () => {
-      // Atualizar contagem de usuários
-      fetchMetrics();
+    // FIX: recebe o data com action ao invés de chamar fetchMetrics()
+    // Isso evitava que o estado fosse sobrescrito pelo servidor toda vez
+    // que um usuário entrava/saía, apagando as vendas acumuladas em tempo real
+    socket.on('user-activity', (data: { action: string; sessionId: string }) => {
+      setMetrics((prev) => {
+        if (!prev) return prev;
+        const delta = data.action === 'joined' ? 1 : -1;
+        return {
+          ...prev,
+          activeUsers: Math.max(0, prev.activeUsers + delta),
+        };
+      });
     });
 
     return () => {
@@ -108,74 +116,76 @@ const Dashboard: React.FC = () => {
     };
   }, []);
 
-const filteredSalesChartData = React.useMemo(() => {
-  if (!metrics) return [];
-  
-  const now = new Date();
-  let startDate: Date;
-  
-  switch (timeFilter) {
-    case '1h':
-      startDate = new Date(now.getTime() - 60 * 60 * 1000);
-      break;
-    case '24h':
-      startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-      break;
-    case '7d':
-      startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      break;
-    case '30d':
-      startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      break;
-    default:
-      startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-  }
-  
-  const salesData = timeFilter === '30d' ? metrics.salesLast30Days : metrics.salesLast7Days;
-  const filteredSales = salesData.filter(sale => new Date(sale.date) >= startDate);
-  
-  if (filteredSales.length === 0) return [];
-  
-  const groupedByDate = filteredSales.reduce((acc: any, sale) => {
-    let dateKey: string;
-    
-    if (timeFilter === '1h' || timeFilter === '24h') {
-      dateKey = new Date(sale.date).toLocaleTimeString('pt-BR', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
-      });
-    } else {
-      dateKey = new Date(sale.date).toLocaleDateString('pt-BR', { 
-        day: '2-digit', 
-        month: '2-digit' 
-      });
+  const filteredSalesChartData = React.useMemo(() => {
+    if (!metrics) return [];
+
+    const now = new Date();
+    let startDate: Date;
+
+    switch (timeFilter) {
+      case '1h':
+        startDate = new Date(now.getTime() - 60 * 60 * 1000);
+        break;
+      case '24h':
+        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        break;
+      case '7d':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '30d':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     }
-    
-    if (acc[dateKey]) {
-      acc[dateKey] += sale.value;
-    } else {
-      acc[dateKey] = sale.value;
-    }
-    
-    return acc;
-  }, {});
-  
-  return Object.entries(groupedByDate).map(([date, valor]) => ({
-    date,
-    valor: parseFloat(Number(valor).toFixed(2)),
-  }));
-}, [metrics, timeFilter]);
+
+    const salesData = timeFilter === '30d' ? metrics.salesLast30Days : metrics.salesLast7Days;
+    const filteredSales = salesData.filter((sale) => new Date(sale.date) >= startDate);
+
+    if (filteredSales.length === 0) return [];
+
+    const groupedByDate = filteredSales.reduce((acc: any, sale) => {
+      let dateKey: string;
+
+      if (timeFilter === '1h' || timeFilter === '24h') {
+        dateKey = new Date(sale.date).toLocaleTimeString('pt-BR', {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+      } else {
+        dateKey = new Date(sale.date).toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+        });
+      }
+
+      if (acc[dateKey]) {
+        acc[dateKey] += sale.value;
+      } else {
+        acc[dateKey] = sale.value;
+      }
+
+      return acc;
+    }, {});
+
+    return Object.entries(groupedByDate).map(([date, valor]) => ({
+      date,
+      valor: parseFloat(Number(valor).toFixed(2)),
+    }));
+  }, [metrics, timeFilter]);
 
   const categoryData = React.useMemo(() => {
-    return metrics?.topProducts.reduce((acc: any[], product) => {
-      const existing = acc.find((item) => item.category === product.category);
-      if (existing) {
-        existing.quantidade += 1;
-      } else {
-        acc.push({ category: product.category, quantidade: 1 });
-      }
-      return acc;
-    }, []) || [];
+    return (
+      metrics?.topProducts.reduce((acc: any[], product) => {
+        const existing = acc.find((item) => item.category === product.category);
+        if (existing) {
+          existing.quantidade += 1;
+        } else {
+          acc.push({ category: product.category, quantidade: 1 });
+        }
+        return acc;
+      }, []) || []
+    );
   }, [metrics?.topProducts]);
 
   const handleLogout = () => {
